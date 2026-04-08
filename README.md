@@ -1,6 +1,6 @@
 # dis
 
-Dev containers without the bullshit.
+Dev containers without the baggage.
 
 No VS Code plugin. No Node runtime. No JSON schema with 400 properties.
 Just a Dockerfile, a Justfile, and a single binary that gets out of your way.
