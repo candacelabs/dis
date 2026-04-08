@@ -29,7 +29,7 @@ Dev containers are a good idea buried under terrible execution. The core promise
 ### Principles
 
 1. **A Dockerfile is the dev environment.** If you can write a Dockerfile, you can use `dis`. No new config language to learn.
-2. **`just` is the interface.** Developers type `just build`, `just test`, `just shell`. They never think about Docker. `dis` generates the Justfile and proxies commands transparently.
+2. **Your tools, not ours.** `dis` doesn't mandate a task runner, an editor, or a workflow. If you have `just` installed, `dis init` generates a Justfile with shortcuts. If you don't, `dis run` works fine on its own.
 3. **Zero config by default.** Ports, env vars, mounts, shell preference — all declared as `LABEL`s in your Dockerfile. One file, one source of truth.
 4. **Edit on host, run in container.** Your code lives on your machine. Your editor is your editor. The container is just a runtime.
 5. **Single binary, no dependencies.** `dis` is a Go binary that talks directly to the Docker API. No Node. No Python. No runtime. Just `dis`.
@@ -42,32 +42,32 @@ go install github.com/candacelabs/dis/cmd/dis@latest
 
 Or grab a binary from [releases](https://github.com/candacelabs/dis/releases).
 
-Requires: Docker and [just](https://github.com/casey/just).
+Requires: Docker. Optionally [just](https://github.com/casey/just) for convenient aliases.
 
 ## Quick Start
 
 ```bash
 cd your-project
 
-# Scaffold a .dis/Dockerfile + Justfile (auto-detects Node/Python/Go/Rust)
+# Scaffold a .dis/Dockerfile (+ Justfile if just is installed)
 dis init
 
 # Start your dev environment
-just dev
+dis up
 
 # Run commands inside the container — transparently
-just build
-just test
-just lint
+dis run make build
+dis run make test
+dis run make lint
 
 # Need a shell? Sure
-just shell
+dis shell
 
 # Done for the day
-just down
+dis down
 ```
 
-That's the entire workflow. No JSON. No YAML. No extensions marketplace.
+If you have [just](https://github.com/casey/just) installed, `dis init` generates a Justfile so you can use `just dev`, `just build`, `just test` as shortcuts. But it's entirely optional — `dis` works standalone.
 
 ## How It Works
 
@@ -88,7 +88,7 @@ RUN apt-get update && apt-get install -y git curl
 WORKDIR /workspace
 ```
 
-**`Justfile`** — recipes that proxy through `dis`:
+**`Justfile`** *(optional — generated when `just` is installed)* — shortcuts that proxy through `dis`:
 ```just
 # Start the dev environment
 dev:
@@ -173,7 +173,7 @@ No labels? Sensible defaults. `dis` works with a bare Dockerfile.
 | Config | JSON + YAML + lifecycle scripts | Dockerfile LABELs |
 | Runtime | Node.js CLI | Single Go binary |
 | Editor | VS Code (or suffer) | Any — your code is on host |
-| Dependencies | Node, npm, VS Code | Docker, just |
+| Dependencies | Node, npm, VS Code | Docker (just optional) |
 | "Features" | Registry of shell scripts | Write your own Dockerfile |
 | Learning curve | devcontainer.json schema | Dockerfile (you already know it) |
 | Transparency | Magic | `dis run` = `docker exec` |

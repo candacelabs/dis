@@ -1,6 +1,7 @@
 package scaffold
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,10 @@ import (
 
 func TestInit_NewProject(t *testing.T) {
 	dir := t.TempDir()
+	// Ensure just is "found" so Justfile is generated.
+	origLookPath := lookPath
+	lookPath = func(string) error { return nil }
+	defer func() { lookPath = origLookPath }()
 
 	err := Init(dir, InitOptions{})
 	if err != nil {
@@ -121,6 +126,9 @@ func TestInit_ExistingDockerfile_Force(t *testing.T) {
 
 func TestInit_ExistingJustfile_NoForce(t *testing.T) {
 	dir := t.TempDir()
+	origLookPath := lookPath
+	lookPath = func(string) error { return nil }
+	defer func() { lookPath = origLookPath }()
 
 	// Pre-create a Justfile
 	originalContent := "# my custom justfile"
@@ -147,6 +155,30 @@ func TestInit_ExistingJustfile_NoForce(t *testing.T) {
 
 	if string(content) != originalContent {
 		t.Error("Justfile should not have been overwritten without --force")
+	}
+}
+
+func TestInit_NoJust_SkipsJustfile(t *testing.T) {
+	dir := t.TempDir()
+	origLookPath := lookPath
+	lookPath = func(string) error { return errors.New("not found") }
+	defer func() { lookPath = origLookPath }()
+
+	err := Init(dir, InitOptions{})
+	if err != nil {
+		t.Fatalf("Init returned unexpected error: %v", err)
+	}
+
+	// .dis/Dockerfile must exist
+	dockerfilePath := filepath.Join(dir, ".dis", "Dockerfile")
+	if _, err := os.Stat(dockerfilePath); os.IsNotExist(err) {
+		t.Error(".dis/Dockerfile was not created")
+	}
+
+	// Justfile should NOT exist
+	justfilePath := filepath.Join(dir, "Justfile")
+	if _, err := os.Stat(justfilePath); !os.IsNotExist(err) {
+		t.Error("Justfile should not be created when just is not installed")
 	}
 }
 
