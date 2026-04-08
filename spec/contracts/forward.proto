@@ -1,0 +1,79 @@
+syntax = "proto3";
+package dis.agent;
+
+// =============================================================================
+// A3: Forwarding agent output
+// =============================================================================
+
+// ForwardConfig aggregates all host→container forwarding configuration.
+// Each function returns Docker SDK-compatible mount/env/port specs.
+
+// GitForwardConfig produces bind mounts for git credential forwarding.
+//
+// Go signature:
+//   func GitMounts() ([]mount.Mount, []string, error)
+//   Returns: (mounts, env vars as "KEY=VALUE", error)
+//
+// Behavior:
+//   - Mounts ~/.gitconfig (or ~/.config/git/config) read-only
+//   - Mounts credential helper socket if available
+//   - Returns env vars for GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL from host git config
+message GitForwardOutput {
+  repeated DockerMount mounts = 1;
+  repeated string env_vars = 2;     // "KEY=VALUE" format
+}
+
+// SSHForwardConfig produces bind mounts for SSH agent forwarding.
+//
+// Go signature:
+//   func SSHMounts() ([]mount.Mount, []string, error)
+//   Returns: (mounts, env vars as "KEY=VALUE", error)
+//
+// Behavior:
+//   - Mounts SSH_AUTH_SOCK if set on host
+//   - Sets SSH_AUTH_SOCK env var in container
+//   - Mounts ~/.ssh/known_hosts read-only if exists
+message SSHForwardOutput {
+  repeated DockerMount mounts = 1;
+  repeated string env_vars = 2;
+}
+
+// PortBindings converts dis.ports label values into Docker port bindings.
+//
+// Go signature:
+//   func PortBindings(ports []int) (nat.PortMap, nat.PortSet, error)
+//   Returns: (host→container port map, exposed ports set, error)
+//
+// Behavior:
+//   - Each port maps host:port → container:port (same number)
+//   - Returns nat.PortMap for HostConfig and nat.PortSet for ContainerConfig
+message PortBindingsOutput {
+  repeated PortMapping mappings = 1;
+}
+
+message PortMapping {
+  int32 host_port = 1;
+  int32 container_port = 2;
+  string protocol = 3;  // "tcp"
+}
+
+// DockerMount represents a bind mount for the Docker SDK.
+message DockerMount {
+  string type = 1;       // "bind" or "volume"
+  string source = 2;     // host path or volume name
+  string target = 3;     // container path
+  bool read_only = 4;
+}
+
+// HistoryVolume returns a named Docker volume mount for shell history persistence.
+//
+// Go signature:
+//   func HistoryVolume(projectName string, shell string) mount.Mount
+//
+// Behavior:
+//   - Volume name: "dis-<projectName>-history"
+//   - Target: shell history file path (e.g., ~/.bash_history, ~/.zsh_history)
+message HistoryVolumeOutput {
+  string volume_name = 1;
+  string target_path = 2;
+}

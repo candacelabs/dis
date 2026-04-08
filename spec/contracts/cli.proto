@@ -1,0 +1,90 @@
+syntax = "proto3";
+package dis.agent;
+
+// =============================================================================
+// A7: CLI Wiring agent output (Level 3 — depends on A4, A5, A6)
+// =============================================================================
+
+// The CLI agent wires all subsystems into cobra commands.
+// Each command follows this pattern:
+//   1. Resolve config (may fail if .dis/Dockerfile missing)
+//   2. Create Manager (may fail if Docker not running)
+//   3. Delegate to the appropriate subsystem
+//   4. Handle errors with user-friendly messages
+//   5. Exit with appropriate code
+
+// Root command: `dis`
+// - Version flag: --version
+// - No default action (prints help)
+message RootCommandSpec {
+  string use = 1;       // "dis"
+  string short = 2;     // "Simple, plug-and-play dev containers"
+}
+
+// Command definitions — each maps to a cobra.Command
+message CommandSpec {
+  string use = 1;        // e.g., "up", "run [command...]"
+  string short = 2;      // one-line description
+  string long = 3;       // detailed help text
+  repeated string aliases = 4;
+  bool needs_config = 5; // true if command requires .dis/Dockerfile
+  bool needs_docker = 6; // true if command needs Docker running
+}
+
+// Full command table:
+//
+// | Command    | Use              | needs_config | needs_docker | Delegates to        |
+// |------------|------------------|--------------|--------------|---------------------|
+// | init       | init             | false        | false        | scaffold.Init       |
+// | up         | up               | true         | true         | manager.Up          |
+// | down       | down             | true         | true         | manager.Down        |
+// | run        | run [command...] | true         | true         | proxy.RunCommand    |
+// | shell      | shell            | true         | true         | proxy.InteractiveShell |
+// | status     | status           | true         | true         | manager.Status      |
+// | rebuild    | rebuild          | true         | true         | manager.Rebuild     |
+// | logs       | logs             | true         | true         | manager.Logs        |
+// | nuts       | nuts             | false        | false        | (inline easter egg) |
+// | aster      | aster            | true         | true         | manager.Logs(error) |
+
+// Error message conventions:
+//
+// Docker not running:
+//   "Docker is not running. Start Docker Desktop (or dockerd) and try again."
+//
+// .dis/Dockerfile not found:
+//   "No .dis/Dockerfile found. Run 'dis init' to set up your dev environment."
+//
+// Container not running (for run/shell):
+//   "Dev container is not running. Run 'dis up' (or 'just dev') first."
+//
+// just not installed:
+//   (only warn on `dis init`, don't block)
+//   "Warning: 'just' is not installed. Install it from https://github.com/casey/just"
+
+// CLI output formatting:
+//
+// dis up:
+//   "🔨 Building image dis-myproject..."
+//   "🚀 Starting container dis-myproject-dev..."
+//   "📦 Running post_create: npm install..."
+//   "✅ Dev environment ready!"
+//   "   Ports: 3000, 8080"
+//   "   Shell: /bin/zsh"
+//   "   Run 'just shell' to enter the container"
+//
+// dis status:
+//   "Container: dis-myproject-dev"
+//   "Status:    running (up 2h 15m)"
+//   "Image:     dis-myproject"
+//   "Ports:     3000 → 3000, 8080 → 8080"
+//   "Shell:     /bin/zsh"
+//   "Mounts:    . → /workspace, ./data → /data"
+//
+// dis nuts:
+//   "🥜 dis nuts — system info"
+//   "dis version: 0.1.0"
+//   "Docker version: 24.0.7"
+//   "Docker running: yes"
+//   "OS: linux/amd64"
+//   "Project: myproject"
+//   "Container: running"

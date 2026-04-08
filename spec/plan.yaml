@@ -1,0 +1,1467 @@
+# dis — DAG Execution Plan
+# Canonical source of truth for agent-based implementation.
+# Read spec/contracts/*.proto for typed agent I/O boundaries.
+
+project:
+  name: dis
+  description: >
+    Simple, plug-and-play dev containers. Single Go binary that manages Docker
+    containers transparently via Justfile recipes. Zero config — convention over
+    configuration via .dis/Dockerfile LABELs.
+  repo_root: /home/u_kaashs/workspace/dis
+  language: Go
+  build_command: go build ./cmd/dis/
+  test_command: go test ./...
+
+# =============================================================================
+# Tech Stack
+# =============================================================================
+
+tech_stack:
+  language: "Go 1.22+"
+  cli_framework: "github.com/spf13/cobra"
+  docker_sdk: "github.com/docker/docker/client v25+"
+  testing: "stdlib testing + github.com/stretchr/testify"
+  build: "go build (single binary)"
+  release: "goreleaser"
+  linting: "golangci-lint"
+
+# =============================================================================
+# DAG — YAML Adjacency List
+# =============================================================================
+
+agents:
+  - id: A0
+    name: project_bootstrap
+    level: 0
+    depends_on: []
+    input_protos: []
+    output_protos: []
+    reads: []
+    writes:
+      - go.mod
+      - go.sum
+      - cmd/dis/main.go
+      - Justfile
+      - .goreleaser.yml
+      - README.md
+      - LICENSE
+      - .gitignore
+    test_glob: ""
+    description: >
+      Initialize Go module, install dependencies, create skeleton main.go that
+      compiles and prints version. Set up project infrastructure files.
+    complexity: S
+    acceptance_criteria:
+      - "`go build ./cmd/dis/` succeeds"
+      - "`./dis --version` prints version string"
+      - "go.mod lists cobra, docker SDK, testify as dependencies"
+      - "Justfile has build, test, lint, clean recipes"
+      - ".goreleaser.yml configured for linux/darwin amd64/arm64"
+
+    agent_prompt: |
+      You are implementing the project bootstrap for `dis`, a Go CLI tool for dev containers.
+
+      ## Task
+      Initialize the Go project at /home/u_kaashs/workspace/dis with all infrastructure files.
+
+      ## Files to Create
+
+      ### go.mod
+      ```
+      module github.com/candacelabs/dis
+      go 1.22
+      ```
+      Then run: `go get github.com/spf13/cobra@latest github.com/docker/docker/client@v25.0.0 github.com/stretchr/testify@latest`
+      Also need: `github.com/docker/go-connections` for nat package.
+
+      ### cmd/dis/main.go
+      Minimal cobra root command:
+      - Use: "dis"
+      - Short: "Simple, plug-and-play dev containers"
+      - Version: "0.1.0"
+      - No subcommands yet (just root + version flag)
+      - Must compile and run: `./dis --version` → "dis version 0.1.0"
+
+      ### Justfile
+      ```just
+      # dis development recipes
+
+      default:
+          @just --list
+
+      build:
+          go build -o dis ./cmd/dis/
+
+      test:
+          go test ./... -v
+
+      lint:
+          golangci-lint run ./...
+
+      clean:
+          rm -f dis
+          go clean
+
+      install:
+          go install ./cmd/dis/
+      ```
+
+      ### .goreleaser.yml
+      Standard Go binary release config:
+      - Builds for linux/darwin, amd64/arm64
+      - Archive format: tar.gz for linux, zip for darwin
+      - No CGO
+
+      ### README.md
+      ```markdown
+      # dis
+
+      Simple, plug-and-play dev containers. Part of [Candace Labs](https://github.com/candacelabs).
+
+      ## Install
+
+      ```bash
+      go install github.com/candacelabs/dis/cmd/dis@latest
+      ```
+
+      ## Quick Start
+
+      ```bash
+      cd your-project
+      dis init        # scaffold .dis/Dockerfile + Justfile
+      just dev        # start dev environment
+      just build      # run build inside container
+      just shell      # drop into container shell
+      just down       # stop container
+      ```
+
+      ## License
+
+      MIT
+      ```
+
+      ### LICENSE
+      MIT license, copyright 2025 Candace Labs.
+
+      ### .gitignore
+      Standard Go .gitignore: binary, vendor, .DS_Store, *.exe, /dis
+
+      ## Acceptance Criteria
+      1. `go build ./cmd/dis/` succeeds with zero errors
+      2. `./dis --version` prints "dis version 0.1.0"
+      3. `go mod tidy` makes no changes (deps are clean)
+      4. Justfile recipes work: `just build` compiles the binary
+
+  - id: A1
+    name: config_labels
+    level: 0
+    depends_on: []
+    input_protos: []
+    output_protos: [DisConfig, ParseLabelsSpec, ResolveConfigSpec]
+    reads: []
+    writes:
+      - internal/config/convention.go
+      - internal/config/convention_test.go
+      - internal/container/labels.go
+      - internal/container/labels_test.go
+    test_glob: "internal/config/*_test.go internal/container/labels_test.go"
+    description: >
+      Implement convention-based config resolution. Parse .dis/Dockerfile for
+      LABEL directives, extract dis.* labels, resolve to DisConfig struct with defaults.
+    complexity: M
+    acceptance_criteria:
+      - "ParseLabelsFromDockerfile extracts all dis.* labels from a Dockerfile"
+      - "Handles multi-line LABELs and quoted values"
+      - "Handles LABEL key=value and LABEL key value formats"
+      - "dis.ports='3000,8080' parses to []int{3000, 8080}"
+      - "dis.env='NODE_ENV=development,DEBUG=true' parses to []EnvVar"
+      - "dis.mounts='./data:/data' parses to []Mount"
+      - "dis.shell defaults to /bin/bash if not set"
+      - "ResolveConfig derives project_name from directory basename"
+      - "ResolveConfig derives image_name as 'dis-<project_name>'"
+      - "ResolveConfig derives container_name as 'dis-<project_name>-dev'"
+      - "ResolveConfig returns clear error if .dis/Dockerfile missing"
+      - "All tests pass with go test ./internal/config/ ./internal/container/"
+
+    agent_prompt: |
+      You are implementing the config and label parsing layer for `dis`, a Go CLI dev container tool.
+
+      ## Context
+      dis uses ZERO config files. All configuration comes from LABELs in `.dis/Dockerfile`.
+      Your code parses these labels and produces a resolved config struct.
+
+      ## Proto Contract (see spec/contracts/config.proto)
+
+      ### Types to implement:
+
+      ```go
+      // internal/config/convention.go
+      package config
+
+      // DisConfig is the fully resolved configuration for a dis project.
+      type DisConfig struct {
+          ProjectName   string
+          DockerfilePath string    // always ".dis/Dockerfile"
+          WorkspaceDir  string     // default "/workspace"
+          Ports         []int
+          EnvVars       []EnvVar
+          ExtraMounts   []Mount
+          Shell         string     // default "/bin/bash"
+          PostCreate    string
+          ImageName     string     // "dis-<ProjectName>"
+          ContainerName string     // "dis-<ProjectName>-dev"
+      }
+
+      type EnvVar struct {
+          Key   string
+          Value string
+      }
+
+      type Mount struct {
+          Source   string
+          Target   string
+          ReadOnly bool
+      }
+
+      // ResolveConfig finds .dis/Dockerfile in projectRoot, parses labels, applies defaults.
+      func ResolveConfig(projectRoot string) (*DisConfig, error)
+
+      // DockerfileExists checks if .dis/Dockerfile exists.
+      func DockerfileExists(projectRoot string) bool
+      ```
+
+      ```go
+      // internal/container/labels.go
+      package container
+
+      // ParseLabelsFromDockerfile reads a Dockerfile and extracts dis.* LABEL values.
+      // Supports both `LABEL key=value` and `LABEL key="value"` formats.
+      // Supports multi-label: `LABEL key1=val1 key2=val2`
+      func ParseLabelsFromDockerfile(dockerfilePath string) (map[string]string, error)
+      ```
+
+      ## Label Parsing Rules
+      1. Read Dockerfile line by line
+      2. Find lines starting with `LABEL` (case-insensitive after trimming)
+      3. Handle continuation lines (trailing `\`)
+      4. Parse `LABEL dis.ports="3000,8080"` → key="dis.ports", value="3000,8080"
+      5. Parse `LABEL dis.shell=/bin/zsh` → key="dis.shell", value="/bin/zsh"
+      6. Only extract labels starting with "dis."
+      7. Strip surrounding quotes from values
+
+      ## Config Resolution Rules
+      1. `projectRoot` is the directory containing the project (has `.dis/` subdirectory)
+      2. ProjectName = filepath.Base(projectRoot) (sanitized: lowercase, replace spaces with hyphens)
+      3. DockerfilePath = filepath.Join(projectRoot, ".dis", "Dockerfile")
+      4. If DockerfilePath doesn't exist → return wrapped error with helpful message
+      5. Parse labels from Dockerfile
+      6. Apply defaults:
+         - Shell: "/bin/bash" if dis.shell not set
+         - WorkspaceDir: "/workspace"
+         - Ports: empty if dis.ports not set
+         - EnvVars: empty if dis.env not set
+      7. Parse dis.ports: split by comma, convert each to int, error on non-numeric
+      8. Parse dis.env: split by comma, each item split by first "=" into key/value
+      9. Parse dis.mounts: split by comma, each item split by ":" into source/target
+      10. ImageName = "dis-" + ProjectName
+      11. ContainerName = "dis-" + ProjectName + "-dev"
+
+      ## Test Cases (convention_test.go)
+      1. TestResolveConfig_FullLabels — Dockerfile with all labels set
+      2. TestResolveConfig_Defaults — Dockerfile with no dis.* labels
+      3. TestResolveConfig_MissingDockerfile — returns error with helpful message
+      4. TestResolveConfig_ProjectNaming — verifies image/container name derivation
+      5. TestResolveConfig_InvalidPort — non-numeric port returns error
+      6. TestResolveConfig_EmptyPorts — dis.ports="" returns empty slice
+
+      ## Test Cases (labels_test.go)
+      1. TestParseLabels_SingleLabel — one LABEL per line
+      2. TestParseLabels_MultiLabel — multiple key=value on one LABEL line
+      3. TestParseLabels_QuotedValues — values in single and double quotes
+      4. TestParseLabels_ContinuationLines — LABEL with backslash continuation
+      5. TestParseLabels_NonDisLabels — non-dis labels are ignored
+      6. TestParseLabels_EmptyFile — returns empty map, no error
+      7. TestParseLabels_MissingFile — returns error
+
+      ## Acceptance Criteria
+      1. All test cases pass: `go test ./internal/config/ ./internal/container/`
+      2. ParseLabelsFromDockerfile correctly extracts all dis.* labels
+      3. ResolveConfig produces correct DisConfig for a fully-labeled Dockerfile
+      4. ResolveConfig applies all defaults for a bare Dockerfile
+      5. Error messages are user-friendly: "No .dis/Dockerfile found in /path. Run 'dis init' to set up."
+
+  - id: A2
+    name: project_detection_templates
+    level: 0
+    depends_on: []
+    input_protos: []
+    output_protos: [ProjectType, DetectProjectTypeSpec, DockerfileTemplateSpec]
+    reads: []
+    writes:
+      - internal/scaffold/detect.go
+      - internal/scaffold/detect_test.go
+      - internal/scaffold/templates.go
+      - internal/scaffold/templates_test.go
+    test_glob: "internal/scaffold/*_test.go"
+    description: >
+      Implement project type detection (Node/Python/Go/Rust) and Dockerfile
+      template generation for each type.
+    complexity: M
+    acceptance_criteria:
+      - "DetectProjectType returns Node when package.json exists"
+      - "DetectProjectType returns Python when pyproject.toml exists"
+      - "DetectProjectType returns Go when go.mod exists"
+      - "DetectProjectType returns Rust when Cargo.toml exists"
+      - "DetectProjectType returns Unknown for empty directory"
+      - "Priority: if both package.json and go.mod exist, Node wins (first match)"
+      - "DockerfileTemplate(Node) returns valid Dockerfile with node image + dis labels"
+      - "DockerfileTemplate(Python) returns valid Dockerfile with python image"
+      - "DockerfileTemplate(Go) returns valid Dockerfile with golang image"
+      - "DockerfileTemplate(Rust) returns valid Dockerfile with rust image"
+      - "DockerfileTemplate(Unknown) returns generic ubuntu Dockerfile"
+      - "All templates include WORKDIR /workspace and sensible dis.* LABELs"
+      - "All tests pass with go test ./internal/scaffold/"
+
+    agent_prompt: |
+      You are implementing project type detection and Dockerfile template generation for `dis`.
+
+      ## Context
+      `dis init` needs to detect what kind of project it's in (Node, Python, Go, Rust, or unknown)
+      and generate an appropriate `.dis/Dockerfile` for that project type.
+
+      ## Proto Contract (see spec/contracts/scaffold.proto)
+
+      ### Types to implement:
+
+      ```go
+      // internal/scaffold/detect.go
+      package scaffold
+
+      type ProjectType string
+
+      const (
+          ProjectTypeNode    ProjectType = "node"
+          ProjectTypePython  ProjectType = "python"
+          ProjectTypeGo      ProjectType = "go"
+          ProjectTypeRust    ProjectType = "rust"
+          ProjectTypeUnknown ProjectType = "unknown"
+      )
+
+      // DetectProjectType inspects projectRoot for language marker files.
+      // First match wins in this order: Node, Python, Go, Rust, Unknown.
+      func DetectProjectType(projectRoot string) ProjectType
+      ```
+
+      ```go
+      // internal/scaffold/templates.go
+      package scaffold
+
+      // DockerfileTemplate returns a complete Dockerfile string for the given project type.
+      // Uses Go embed or string literals for templates.
+      func DockerfileTemplate(projectType ProjectType) string
+      ```
+
+      ## Detection Rules (first match wins)
+      1. `package.json` exists → Node
+      2. `pyproject.toml` OR `requirements.txt` OR `setup.py` exists → Python
+      3. `go.mod` exists → Go
+      4. `Cargo.toml` exists → Rust
+      5. else → Unknown
+
+      Detection checks file existence in the project root only (not recursive).
+
+      ## Dockerfile Templates
+
+      ### Node template:
+      ```dockerfile
+      FROM node:20-bookworm
+
+      LABEL dis.ports="3000"
+      LABEL dis.shell="/bin/bash"
+      LABEL dis.post_create="npm install"
+
+      RUN apt-get update && apt-get install -y git curl && rm -rf /var/lib/apt/lists/*
+      WORKDIR /workspace
+      ```
+
+      ### Python template:
+      ```dockerfile
+      FROM python:3.12-bookworm
+
+      LABEL dis.shell="/bin/bash"
+      LABEL dis.post_create="pip install -r requirements.txt"
+
+      RUN apt-get update && apt-get install -y git curl && rm -rf /var/lib/apt/lists/*
+      WORKDIR /workspace
+      ```
+
+      ### Go template:
+      ```dockerfile
+      FROM golang:1.22-bookworm
+
+      LABEL dis.ports="8080"
+      LABEL dis.shell="/bin/bash"
+
+      RUN apt-get update && apt-get install -y git curl && rm -rf /var/lib/apt/lists/*
+      WORKDIR /workspace
+      ```
+
+      ### Rust template:
+      ```dockerfile
+      FROM rust:1.77-bookworm
+
+      LABEL dis.ports="8080"
+      LABEL dis.shell="/bin/bash"
+
+      RUN apt-get update && apt-get install -y git curl pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+      WORKDIR /workspace
+      ```
+
+      ### Unknown template:
+      ```dockerfile
+      FROM ubuntu:22.04
+
+      LABEL dis.shell="/bin/bash"
+
+      RUN apt-get update && apt-get install -y git curl build-essential && rm -rf /var/lib/apt/lists/*
+      WORKDIR /workspace
+      ```
+
+      ## Tests
+
+      ### detect_test.go
+      Use `t.TempDir()` to create temp directories with marker files.
+      1. TestDetectProjectType_Node — create package.json, expect Node
+      2. TestDetectProjectType_Python_Pyproject — create pyproject.toml, expect Python
+      3. TestDetectProjectType_Python_Requirements — create requirements.txt, expect Python
+      4. TestDetectProjectType_Go — create go.mod, expect Go
+      5. TestDetectProjectType_Rust — create Cargo.toml, expect Rust
+      6. TestDetectProjectType_Unknown — empty dir, expect Unknown
+      7. TestDetectProjectType_Priority — create package.json + go.mod, expect Node (first wins)
+
+      ### templates_test.go
+      1. TestDockerfileTemplate_Node — verify contains "FROM node:", dis.ports, dis.post_create
+      2. TestDockerfileTemplate_Python — verify contains "FROM python:", dis.post_create
+      3. TestDockerfileTemplate_Go — verify contains "FROM golang:"
+      4. TestDockerfileTemplate_Rust — verify contains "FROM rust:", pkg-config
+      5. TestDockerfileTemplate_Unknown — verify contains "FROM ubuntu:"
+      6. TestDockerfileTemplate_AllHaveWorkdir — all templates contain "WORKDIR /workspace"
+      7. TestDockerfileTemplate_AllHaveShell — all templates contain "dis.shell"
+
+      ## Acceptance Criteria
+      1. All tests pass: `go test ./internal/scaffold/`
+      2. DetectProjectType correctly identifies all 5 types
+      3. Each template is a valid Dockerfile (starts with FROM, has WORKDIR)
+      4. Templates include sensible dis.* LABELs for each language
+
+  - id: A3
+    name: forwarding
+    level: 0
+    depends_on: []
+    input_protos: []
+    output_protos: [GitForwardOutput, SSHForwardOutput, PortBindingsOutput, HistoryVolumeOutput]
+    reads: []
+    writes:
+      - internal/forward/git.go
+      - internal/forward/git_test.go
+      - internal/forward/ssh.go
+      - internal/forward/ssh_test.go
+      - internal/forward/ports.go
+      - internal/forward/ports_test.go
+      - internal/forward/history.go
+      - internal/forward/history_test.go
+    test_glob: "internal/forward/*_test.go"
+    description: >
+      Implement host-to-container forwarding: git credentials, SSH agent, port
+      bindings, and shell history volume.
+    complexity: M
+    acceptance_criteria:
+      - "GitMounts returns bind mount for ~/.gitconfig if it exists"
+      - "GitMounts returns empty if no git config found"
+      - "SSHMounts returns SSH_AUTH_SOCK mount if env var is set"
+      - "SSHMounts returns empty if SSH_AUTH_SOCK not set"
+      - "PortBindings([3000,8080]) returns correct nat.PortMap"
+      - "PortBindings([]) returns empty map"
+      - "HistoryVolume('myproject', '/bin/bash') returns volume targeting ~/.bash_history"
+      - "HistoryVolume('myproject', '/bin/zsh') returns volume targeting ~/.zsh_history"
+      - "All tests pass with go test ./internal/forward/"
+
+    agent_prompt: |
+      You are implementing host-to-container forwarding for `dis`.
+
+      ## Context
+      When dis creates a container, it needs to forward host credentials and configuration
+      into the container so git, ssh, and port access work seamlessly. These functions
+      return Docker SDK-compatible mount and port configurations.
+
+      ## Proto Contract (see spec/contracts/forward.proto)
+
+      ## Dependencies
+      ```go
+      import (
+          "github.com/docker/docker/api/types/mount"
+          "github.com/docker/go-connections/nat"
+      )
+      ```
+
+      ### internal/forward/git.go
+      ```go
+      package forward
+
+      import "github.com/docker/docker/api/types/mount"
+
+      // GitMounts returns Docker bind mounts and env vars for git credential forwarding.
+      // Mounts ~/.gitconfig (or ~/.config/git/config) read-only into the container.
+      // Extracts GIT_AUTHOR_NAME and GIT_AUTHOR_EMAIL from `git config` on the host.
+      func GitMounts() ([]mount.Mount, []string, error)
+      ```
+
+      Behavior:
+      1. Check if `~/.gitconfig` exists → mount to `/root/.gitconfig` read-only
+      2. Else check if `~/.config/git/config` exists → mount to `/root/.config/git/config` read-only
+      3. Run `git config --global user.name` and `git config --global user.email` on host
+      4. If found, add as env vars: `GIT_AUTHOR_NAME=...`, `GIT_AUTHOR_EMAIL=...`, `GIT_COMMITTER_NAME=...`, `GIT_COMMITTER_EMAIL=...`
+      5. Return (mounts, envVars, nil). Never error for missing config — just return less.
+
+      ### internal/forward/ssh.go
+      ```go
+      package forward
+
+      import "github.com/docker/docker/api/types/mount"
+
+      // SSHMounts returns Docker bind mounts and env vars for SSH agent forwarding.
+      // Mounts SSH_AUTH_SOCK and ~/.ssh/known_hosts into the container.
+      func SSHMounts() ([]mount.Mount, []string, error)
+      ```
+
+      Behavior:
+      1. Read `SSH_AUTH_SOCK` env var
+      2. If set and socket file exists: mount it to same path in container, add env var `SSH_AUTH_SOCK=<path>`
+      3. If `~/.ssh/known_hosts` exists: mount read-only to `/root/.ssh/known_hosts`
+      4. Never error — just return whatever is available
+
+      ### internal/forward/ports.go
+      ```go
+      package forward
+
+      import "github.com/docker/go-connections/nat"
+
+      // PortBindings converts a list of port numbers into Docker SDK port configuration.
+      // Each port maps host:port → container:port/tcp (same number on both sides).
+      func PortBindings(ports []int) (nat.PortMap, nat.PortSet, error)
+      ```
+
+      Behavior:
+      1. For each port in the input list:
+         - Create nat.Port: `<port>/tcp`
+         - Add to PortSet (ExposedPorts)
+         - Add to PortMap: `<port>/tcp` → [{HostIP: "0.0.0.0", HostPort: "<port>"}]
+      2. Return (portMap, portSet, nil)
+
+      ### internal/forward/history.go
+      ```go
+      package forward
+
+      import "github.com/docker/docker/api/types/mount"
+
+      // HistoryVolume returns a named Docker volume mount for persisting shell history.
+      // Volume name: "dis-<projectName>-history"
+      // Target path depends on shell: bash→/root/.bash_history, zsh→/root/.zsh_history
+      func HistoryVolume(projectName string, shell string) mount.Mount
+      ```
+
+      ## Test Cases
+
+      Use testify/assert. For git/ssh tests, you can test the logic by:
+      - Mocking env vars with `t.Setenv`
+      - Creating temp files for config paths (override home dir lookup via a helper)
+
+      Design the functions to accept an optional home dir parameter (or use a package-level
+      variable for testing) so tests don't depend on the actual home directory.
+
+      ### git_test.go
+      1. TestGitMounts_WithGitconfig — temp dir with .gitconfig, verify mount returned
+      2. TestGitMounts_WithXDGConfig — temp dir with .config/git/config, verify mount
+      3. TestGitMounts_NoConfig — empty temp dir, verify empty mounts (no error)
+
+      ### ssh_test.go
+      1. TestSSHMounts_WithAuthSock — set SSH_AUTH_SOCK to temp file, verify mount + env var
+      2. TestSSHMounts_NoAuthSock — unset SSH_AUTH_SOCK, verify empty (no error)
+      3. TestSSHMounts_WithKnownHosts — temp known_hosts file, verify read-only mount
+
+      ### ports_test.go
+      1. TestPortBindings_MultiplePorts — [3000, 8080] → verify PortMap has both
+      2. TestPortBindings_SinglePort — [3000] → verify single mapping
+      3. TestPortBindings_EmptyPorts — [] → empty map, no error
+      4. TestPortBindings_PortMapFormat — verify host port string matches container port
+
+      ### history_test.go
+      1. TestHistoryVolume_Bash — verify volume name and .bash_history target
+      2. TestHistoryVolume_Zsh — verify volume name and .zsh_history target
+      3. TestHistoryVolume_VolumeName — verify "dis-myproject-history" format
+
+      ## Acceptance Criteria
+      1. All tests pass: `go test ./internal/forward/`
+      2. Functions return Docker SDK types directly (mount.Mount, nat.PortMap, nat.PortSet)
+      3. No function panics or errors when host config is missing — graceful degradation
+      4. History volume uses named volume (not bind mount) for persistence across container recreates
+
+  - id: A4
+    name: container_manager
+    level: 1
+    depends_on: [A0, A1, A3]
+    input_protos: [DisConfig, GitForwardOutput, SSHForwardOutput, PortBindingsOutput, HistoryVolumeOutput]
+    output_protos: [UpSpec, DownSpec, ExecSpec, ContainerStatus, RebuildSpec, LogsSpec, NeedsRebuildSpec, IsRunningSpec]
+    reads:
+      - internal/config/convention.go
+      - internal/forward/git.go
+      - internal/forward/ssh.go
+      - internal/forward/ports.go
+      - internal/forward/history.go
+    writes:
+      - internal/container/manager.go
+      - internal/container/manager_test.go
+      - internal/container/health.go
+      - internal/container/health_test.go
+    test_glob: "internal/container/manager_test.go internal/container/health_test.go"
+    description: >
+      Core Docker lifecycle manager using Docker Go SDK. Implements Up, Down, Exec,
+      Status, Rebuild, Logs, NeedsRebuild, IsRunning. This is the heart of dis.
+    complexity: L
+    acceptance_criteria:
+      - "NewManager creates Docker client and validates connectivity"
+      - "NewManager returns helpful error if Docker is not running"
+      - "Up builds image from .dis/Dockerfile (with dockerfile hash label)"
+      - "Up creates container with all mounts, ports, env vars from config + forwarding"
+      - "Up skips rebuild if Dockerfile hash matches image label"
+      - "Up runs post_create command after container start"
+      - "Up is idempotent — returns early if container already running"
+      - "Down stops and removes container by name"
+      - "Down is idempotent — no error if container not found"
+      - "Exec runs command in container, returns exit code"
+      - "Exec supports interactive mode with TTY for shell"
+      - "Status returns running/stopped/not_found state"
+      - "Rebuild forces image removal + fresh build + restart"
+      - "Logs streams container output"
+      - "NeedsRebuild compares Dockerfile SHA256 to image label"
+      - "All tests pass (unit tests with mocked Docker client)"
+
+    agent_prompt: |
+      You are implementing the container manager for `dis` — the core Docker lifecycle engine.
+
+      ## Context
+      This is the heart of dis. It wraps the Docker Go SDK to manage a single dev container
+      per project. It depends on the config layer (A1) for configuration and the forward
+      layer (A3) for host-to-container forwarding.
+
+      ## Proto Contract (see spec/contracts/container.proto)
+
+      ## Imports
+      ```go
+      import (
+          "context"
+          "crypto/sha256"
+          "fmt"
+          "io"
+          "os"
+          "path/filepath"
+
+          "github.com/docker/docker/api/types"
+          "github.com/docker/docker/api/types/container"
+          "github.com/docker/docker/api/types/mount"
+          "github.com/docker/docker/api/types/network"
+          "github.com/docker/docker/client"
+          "github.com/docker/docker/pkg/archive"
+          "github.com/docker/docker/pkg/stdcopy"
+          "github.com/docker/go-connections/nat"
+
+          "github.com/candacelabs/dis/internal/config"
+          "github.com/candacelabs/dis/internal/forward"
+      )
+      ```
+
+      ## Types to Implement
+
+      ```go
+      // internal/container/manager.go
+      package container
+
+      type Manager struct {
+          client client.APIClient  // interface for testability
+          config *config.DisConfig
+      }
+
+      func NewManager(cfg *config.DisConfig) (*Manager, error)
+      func (m *Manager) Up(ctx context.Context) error
+      func (m *Manager) Down(ctx context.Context) error
+      func (m *Manager) Exec(ctx context.Context, cmd []string, interactive bool) (int, error)
+      func (m *Manager) Status(ctx context.Context) (*ContainerStatus, error)
+      func (m *Manager) Rebuild(ctx context.Context) error
+      func (m *Manager) Logs(ctx context.Context, follow bool, tail string) error
+      func (m *Manager) NeedsRebuild(ctx context.Context) (bool, string, error)
+      func (m *Manager) IsRunning(ctx context.Context) (bool, error)
+
+      type ContainerStatus struct {
+          ContainerName string
+          State         string   // "running", "stopped", "not_found"
+          Image         string
+          Ports         []int
+          Mounts        []string
+          Uptime        string
+      }
+      ```
+
+      ## Implementation Details
+
+      ### NewManager
+      1. `client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())`
+      2. `client.Ping(ctx)` — if error: return "Docker is not running. Start Docker Desktop (or dockerd) and try again."
+
+      ### Up
+      1. `NeedsRebuild()` → if true: build image
+      2. Build image:
+         - Create tar archive of `.dis/` directory
+         - `client.ImageBuild(ctx, tar, types.ImageBuildOptions{Dockerfile: "Dockerfile", Tags: []string{cfg.ImageName}, Labels: {"dis.dockerfile.hash": sha256OfDockerfile}})`
+         - Stream build output to stdout
+      3. Check if container exists and running → return early "Already running"
+      4. Remove any stopped container with same name
+      5. Assemble mounts:
+         - Bind mount: project root → /workspace
+         - forward.GitMounts()
+         - forward.SSHMounts()
+         - forward.HistoryVolume(cfg.ProjectName, cfg.Shell)
+         - cfg.ExtraMounts (convert config.Mount → mount.Mount)
+      6. Assemble port bindings: `forward.PortBindings(cfg.Ports)`
+      7. Assemble env vars: cfg.EnvVars (as KEY=VALUE strings) + git env vars + ssh env vars
+      8. `client.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, cfg.ContainerName)`
+         - containerConfig: Image, Env, ExposedPorts, WorkingDir="/workspace", Tty=true, OpenStdin=true
+         - hostConfig: Binds/Mounts, PortBindings, RestartPolicy=no
+      9. `client.ContainerStart(ctx, containerID, types.ContainerStartOptions{})`
+      10. If cfg.PostCreate != "": exec it via Exec(ctx, []string{"sh", "-c", cfg.PostCreate}, false)
+      11. Print summary
+
+      ### Down
+      1. Find container: `client.ContainerInspect(ctx, cfg.ContainerName)`
+      2. If running: `client.ContainerStop(ctx, cfg.ContainerName, container.StopOptions{Timeout: intPtr(10)})`
+      3. `client.ContainerRemove(ctx, cfg.ContainerName, types.ContainerRemoveOptions{})`
+      4. If container not found: return nil (idempotent)
+
+      ### Exec
+      1. Create exec: `client.ContainerExecCreate(ctx, cfg.ContainerName, types.ExecConfig{Cmd, AttachStdout, AttachStderr, AttachStdin: interactive, Tty: interactive, WorkingDir: "/workspace"})`
+      2. Attach: `client.ContainerExecAttach(ctx, execID, types.ExecStartCheck{Tty: interactive})`
+      3. If interactive: raw terminal mode, copy stdin↔conn, stdout↔conn
+      4. If not interactive: stdcopy.StdCopy(os.Stdout, os.Stderr, resp.Reader)
+      5. Inspect exec for exit code: `client.ContainerExecInspect(ctx, execID)`
+      6. Return exit code
+
+      ### NeedsRebuild
+      1. SHA256 hash the .dis/Dockerfile content
+      2. Try to inspect image: `client.ImageInspect(ctx, cfg.ImageName)`
+      3. If image not found: return (true, "image not found")
+      4. Compare hash to image label "dis.dockerfile.hash"
+      5. If different: return (true, "Dockerfile changed")
+      6. Return (false, "")
+
+      ## Testing Strategy
+      Use a Docker client interface for testability:
+      ```go
+      // Extract the methods you call into an interface
+      type DockerClient interface {
+          Ping(ctx context.Context) (types.Ping, error)
+          // ... other methods used
+      }
+      ```
+      Create a mock client for unit tests. Test the logic, not Docker itself.
+      For NeedsRebuild, test hash comparison logic.
+      For Up, test mount assembly logic (can be extracted into a helper).
+
+      ### health.go
+      ```go
+      // internal/container/health.go
+      package container
+
+      // WaitForReady polls the container until it's in "running" state.
+      // Timeout after 30 seconds.
+      func (m *Manager) WaitForReady(ctx context.Context) error
+      ```
+
+      ## Acceptance Criteria
+      1. All tests pass: `go test ./internal/container/`
+      2. Manager correctly assembles all mounts (workspace + git + ssh + history + extra)
+      3. NeedsRebuild correctly compares Dockerfile hashes
+      4. Down is idempotent (no error if container doesn't exist)
+      5. Exec correctly handles both interactive and non-interactive modes
+      6. Error messages are user-friendly
+
+  - id: A5
+    name: scaffold_init
+    level: 1
+    depends_on: [A0, A1, A2]
+    input_protos: [DisConfig, ProjectType, DockerfileTemplateSpec]
+    output_protos: [InitSpec, GenerateJustfileSpec, GenerateDockerfileSpec]
+    reads:
+      - internal/config/convention.go
+      - internal/scaffold/detect.go
+      - internal/scaffold/templates.go
+    writes:
+      - internal/scaffold/init.go
+      - internal/scaffold/init_test.go
+      - internal/scaffold/justfile.go
+      - internal/scaffold/justfile_test.go
+    test_glob: "internal/scaffold/init_test.go internal/scaffold/justfile_test.go"
+    description: >
+      Implement `dis init` orchestration: detect project type, generate
+      .dis/Dockerfile from template, generate Justfile. Handles existing files,
+      force flag, and user messaging.
+    complexity: M
+    acceptance_criteria:
+      - "Init creates .dis/ directory if it doesn't exist"
+      - "Init generates .dis/Dockerfile from detected project type template"
+      - "Init generates Justfile with standard dis recipes"
+      - "Init refuses to overwrite existing .dis/Dockerfile without --force"
+      - "Init with --force overwrites existing files"
+      - "Init prints summary: detected type, files created"
+      - "Init warns if 'just' command not found on PATH"
+      - "GenerateJustfile produces valid Justfile with dev/shell/down/run/build/test/lint recipes"
+      - "Generated Justfile has correct 'dis run' proxy pattern"
+      - "All tests pass with go test ./internal/scaffold/"
+
+    agent_prompt: |
+      You are implementing the `dis init` scaffold system.
+
+      ## Context
+      `dis init` is the first command users run. It detects their project type and
+      generates a `.dis/Dockerfile` and `Justfile` tailored to their stack.
+
+      ## Dependencies (from Level 0 agents)
+      - `internal/scaffold/detect.go` — DetectProjectType(projectRoot) ProjectType
+      - `internal/scaffold/templates.go` — DockerfileTemplate(projectType) string
+      - `internal/config/convention.go` — DockerfileExists(projectRoot) bool
+
+      ## Types to Implement
+
+      ```go
+      // internal/scaffold/init.go
+      package scaffold
+
+      import "github.com/candacelabs/dis/internal/config"
+
+      type InitOptions struct {
+          Force       bool        // overwrite existing files
+          ProjectType ProjectType // override auto-detection (zero value = auto-detect)
+      }
+
+      // Init orchestrates the full `dis init` flow.
+      // Creates .dis/Dockerfile and Justfile in projectRoot.
+      func Init(projectRoot string, opts InitOptions) error
+      ```
+
+      ```go
+      // internal/scaffold/justfile.go
+      package scaffold
+
+      // GenerateJustfile returns the content of the standard dis Justfile.
+      func GenerateJustfile() string
+      ```
+
+      ## Init Behavior
+      1. Check if `.dis/Dockerfile` exists:
+         - If exists and !opts.Force: return error "dis is already initialized. Use --force to overwrite."
+         - If exists and opts.Force: continue (will overwrite)
+      2. Detect project type:
+         - If opts.ProjectType is set (non-zero): use it
+         - Else: call DetectProjectType(projectRoot)
+      3. Generate Dockerfile: DockerfileTemplate(projectType)
+      4. Create `.dis/` directory: `os.MkdirAll(filepath.Join(projectRoot, ".dis"), 0755)`
+      5. Write `.dis/Dockerfile`: os.WriteFile with 0644
+      6. Check if `Justfile` exists:
+         - If exists and !opts.Force: print warning "Justfile already exists, skipping. Use --force to overwrite."
+         - If exists and opts.Force: overwrite
+         - If not exists: write it
+      7. Generate Justfile: GenerateJustfile()
+      8. Write `Justfile` if applicable
+      9. Check if `just` is on PATH: exec.LookPath("just")
+         - If not found: print warning "⚠️  'just' is not installed. Install: https://github.com/casey/just"
+      10. Print summary:
+          ```
+          ✅ dis initialized!
+             Project type: node
+             Created: .dis/Dockerfile
+             Created: Justfile
+
+             Next steps:
+               just dev     # start dev environment
+               just shell   # enter container
+          ```
+
+      ## Justfile Content
+      ```just
+      # Development environment powered by dis (https://github.com/candacelabs/dis)
+
+      default:
+          @just --list
+
+      # Start the dev environment
+      dev:
+          dis up
+
+      # Drop into container shell
+      shell:
+          dis shell
+
+      # Stop the dev environment
+      down:
+          dis down
+
+      # Proxy any command through the dev container
+      run *args:
+          dis run {{args}}
+
+      # Build the project (inside container)
+      build *args:
+          dis run make build {{args}}
+
+      # Run tests (inside container)
+      test *args:
+          dis run make test {{args}}
+
+      # Run linter (inside container)
+      lint:
+          dis run make lint
+
+      # Show dev environment status
+      status:
+          dis status
+
+      # Force rebuild dev environment
+      rebuild:
+          dis rebuild
+      ```
+      NOTE: The double-brace `{{args}}` is Justfile syntax, not Go template syntax.
+      Make sure to output literal `{{args}}` in the generated string.
+
+      ## Tests
+
+      ### init_test.go
+      Use t.TempDir() for isolated test directories.
+      1. TestInit_NewProject — empty dir → creates .dis/Dockerfile and Justfile
+      2. TestInit_DetectsNode — dir with package.json → Dockerfile has "FROM node:"
+      3. TestInit_DetectsPython — dir with requirements.txt → Dockerfile has "FROM python:"
+      4. TestInit_ExistingDockerfile_NoForce — .dis/Dockerfile exists → returns error
+      5. TestInit_ExistingDockerfile_Force — .dis/Dockerfile exists + Force=true → overwrites
+      6. TestInit_ExistingJustfile_NoForce — Justfile exists → skips Justfile, still creates Dockerfile
+      7. TestInit_OverrideProjectType — opts.ProjectType=Go → uses Go template regardless of files
+      8. TestInit_CreatesDisDirectory — .dis/ doesn't exist → creates it
+
+      ### justfile_test.go
+      1. TestGenerateJustfile_HasDevRecipe — contains "dev:" and "dis up"
+      2. TestGenerateJustfile_HasShellRecipe — contains "shell:" and "dis shell"
+      3. TestGenerateJustfile_HasRunProxy — contains "run *args:" and "dis run"
+      4. TestGenerateJustfile_HasBuildRecipe — contains "build" and "dis run make build"
+      5. TestGenerateJustfile_HasTestRecipe — contains "test" and "dis run make test"
+
+      ## Acceptance Criteria
+      1. All tests pass: `go test ./internal/scaffold/`
+      2. Init creates valid .dis/Dockerfile for each project type
+      3. Init creates valid Justfile with all standard recipes
+      4. Init is safe by default (won't overwrite without --force)
+      5. Generated Justfile uses correct `{{args}}` syntax (literal double braces)
+
+  - id: A6
+    name: proxy_exec
+    level: 2
+    depends_on: [A4]
+    input_protos: [ExecSpec, IsRunningSpec]
+    output_protos: [RunCommandSpec, InteractiveShellSpec]
+    reads:
+      - internal/container/manager.go
+    writes:
+      - internal/proxy/exec.go
+      - internal/proxy/exec_test.go
+    test_glob: "internal/proxy/exec_test.go"
+    description: >
+      Implement `dis run` and `dis shell` UX wrappers around Manager.Exec.
+      Handles container-not-running errors, exit code propagation, signal forwarding.
+    complexity: M
+    acceptance_criteria:
+      - "RunCommand checks container is running before exec"
+      - "RunCommand returns helpful error if container not running"
+      - "RunCommand propagates exit code from container command"
+      - "RunCommand streams stdout/stderr to host"
+      - "InteractiveShell opens TTY shell with correct shell from config"
+      - "InteractiveShell returns shell exit code"
+      - "Signal forwarding: SIGINT during RunCommand is handled gracefully"
+      - "All tests pass with go test ./internal/proxy/"
+
+    agent_prompt: |
+      You are implementing the command proxy layer for `dis` — the `dis run` and `dis shell` logic.
+
+      ## Context
+      `dis run <cmd>` and `dis shell` are the most-used commands. They wrap the container
+      manager's Exec method with UX: checking the container is running, formatting errors,
+      propagating exit codes, and handling signals.
+
+      ## Proto Contract (see spec/contracts/proxy.proto)
+
+      ## Dependencies
+      - `internal/container/manager.go` — Manager.Exec(), Manager.IsRunning()
+      - `internal/config/convention.go` — DisConfig.Shell
+
+      ## Types to Implement
+
+      ```go
+      // internal/proxy/exec.go
+      package proxy
+
+      import (
+          "context"
+          "fmt"
+          "os"
+          "os/signal"
+          "syscall"
+
+          "github.com/candacelabs/dis/internal/container"
+          "github.com/candacelabs/dis/internal/config"
+      )
+
+      // RunCommand executes a command inside the running dev container.
+      // Returns an error that wraps the exit code if the command fails.
+      func RunCommand(ctx context.Context, mgr *container.Manager, args []string) error
+
+      // InteractiveShell drops into an interactive shell in the dev container.
+      func InteractiveShell(ctx context.Context, mgr *container.Manager, cfg *config.DisConfig) error
+      ```
+
+      ## ExitCodeError
+      Define a custom error type to carry exit codes:
+      ```go
+      type ExitCodeError struct {
+          Code int
+      }
+
+      func (e *ExitCodeError) Error() string {
+          return fmt.Sprintf("command exited with code %d", e.Code)
+      }
+      ```
+
+      ## RunCommand Behavior
+      1. Check `mgr.IsRunning(ctx)`:
+         - If not running: return error "Dev container is not running. Run 'dis up' (or 'just dev') first."
+      2. Set up signal handling:
+         - Catch SIGINT, SIGTERM
+         - On signal: cancel the context (which should propagate to Docker exec)
+      3. Call `mgr.Exec(ctx, args, false)` — non-interactive
+      4. If exit code != 0: return &ExitCodeError{Code: exitCode}
+      5. Return nil on success
+
+      ## InteractiveShell Behavior
+      1. Check `mgr.IsRunning(ctx)`:
+         - If not running: return same error as RunCommand
+      2. Determine shell: cfg.Shell (already resolved with default /bin/bash)
+      3. Call `mgr.Exec(ctx, []string{cfg.Shell}, true)` — interactive with TTY
+      4. If exit code != 0: return &ExitCodeError{Code: exitCode}
+      5. Return nil
+
+      ## Tests
+
+      ### exec_test.go
+      Create mock Manager for testing (or use an interface):
+
+      ```go
+      type MockManager struct {
+          running  bool
+          execCode int
+          execErr  error
+          execCmds [][]string // record calls
+      }
+      ```
+
+      To make this testable, either:
+      a) Extract an interface from Manager (preferred):
+         ```go
+         type ContainerRunner interface {
+             IsRunning(ctx context.Context) (bool, error)
+             Exec(ctx context.Context, cmd []string, interactive bool) (int, error)
+         }
+         ```
+         Make RunCommand and InteractiveShell accept ContainerRunner instead of *Manager.
+      b) Or use the concrete Manager with a mocked Docker client.
+
+      Option (a) is cleaner. Use it.
+
+      1. TestRunCommand_Success — mock running=true, execCode=0 → nil error
+      2. TestRunCommand_NotRunning — mock running=false → error contains "not running"
+      3. TestRunCommand_NonZeroExit — mock execCode=1 → ExitCodeError{Code: 1}
+      4. TestRunCommand_CommandPassthrough — verify args passed to Exec unchanged
+      5. TestInteractiveShell_Success — mock running=true, execCode=0 → nil
+      6. TestInteractiveShell_NotRunning — mock running=false → error contains "not running"
+      7. TestInteractiveShell_UsesConfigShell — verify shell from config is passed to Exec
+
+      ## Acceptance Criteria
+      1. All tests pass: `go test ./internal/proxy/`
+      2. RunCommand and InteractiveShell use the ContainerRunner interface (testable)
+      3. Exit codes propagate correctly via ExitCodeError
+      4. Error messages are user-friendly and suggest the fix ("Run 'dis up' first")
+
+  - id: A7
+    name: cli_wiring
+    level: 3
+    depends_on: [A4, A5, A6]
+    input_protos: [UpSpec, DownSpec, ContainerStatus, ExecSpec, LogsSpec, RebuildSpec, InitSpec, RunCommandSpec, InteractiveShellSpec]
+    output_protos: [RootCommandSpec, CommandSpec]
+    reads:
+      - internal/container/manager.go
+      - internal/scaffold/init.go
+      - internal/proxy/exec.go
+      - internal/config/convention.go
+    writes:
+      - cmd/dis/root.go
+      - cmd/dis/init.go
+      - cmd/dis/up.go
+      - cmd/dis/down.go
+      - cmd/dis/run.go
+      - cmd/dis/shell.go
+      - cmd/dis/status.go
+      - cmd/dis/rebuild.go
+      - cmd/dis/logs.go
+      - cmd/dis/easter.go
+      - cmd/dis/helpers.go
+    test_glob: ""
+    description: >
+      Wire all subsystems into cobra commands. Each command resolves config,
+      creates manager, delegates to subsystem, handles errors with UX. This
+      is the final integration layer.
+    complexity: L
+    acceptance_criteria:
+      - "`dis init` calls scaffold.Init with correct options"
+      - "`dis init --force` passes Force=true"
+      - "`dis up` resolves config, creates manager, calls Up"
+      - "`dis down` calls manager.Down"
+      - "`dis run <cmd>` calls proxy.RunCommand with args"
+      - "`dis shell` calls proxy.InteractiveShell"
+      - "`dis status` calls manager.Status and formats output"
+      - "`dis rebuild` calls manager.Rebuild"
+      - "`dis logs` calls manager.Logs (--follow flag, --tail flag)"
+      - "`dis nuts` prints system info"
+      - "`dis aster` prints error logs"
+      - "Missing .dis/Dockerfile → helpful error pointing to 'dis init'"
+      - "Docker not running → helpful error"
+      - "Non-zero exit from `dis run` → process exits with same code"
+      - "`dis --version` prints version"
+      - "`dis` with no args prints help"
+
+    agent_prompt: |
+      You are implementing the CLI wiring layer for `dis` — connecting cobra commands to all subsystems.
+
+      ## Context
+      This is the final integration layer. Each cobra command follows a pattern:
+      1. Parse flags
+      2. Resolve config (if needed)
+      3. Create manager (if needed)
+      4. Delegate to subsystem
+      5. Handle errors with user-friendly messages
+      6. Exit with appropriate code
+
+      ## Proto Contract (see spec/contracts/cli.proto)
+
+      ## Dependencies (from all previous levels)
+      - `internal/config` — ResolveConfig, DockerfileExists, DisConfig
+      - `internal/container` — NewManager, Manager (Up, Down, Exec, Status, Rebuild, Logs)
+      - `internal/scaffold` — Init, InitOptions
+      - `internal/proxy` — RunCommand, InteractiveShell, ExitCodeError
+
+      ## File Structure
+
+      ### cmd/dis/main.go (UPDATE — already exists from A0)
+      Update to call root command Execute().
+
+      ### cmd/dis/root.go
+      ```go
+      package main
+
+      import (
+          "fmt"
+          "os"
+          "github.com/spf13/cobra"
+      )
+
+      var version = "0.1.0"
+
+      var rootCmd = &cobra.Command{
+          Use:     "dis",
+          Short:   "Simple, plug-and-play dev containers",
+          Long:    "dis — simple, plug-and-play dev containers.\nPart of Candace Labs.",
+          Version: version,
+      }
+
+      func Execute() {
+          if err := rootCmd.Execute(); err != nil {
+              os.Exit(1)
+          }
+      }
+
+      func init() {
+          rootCmd.AddCommand(initCmd)
+          rootCmd.AddCommand(upCmd)
+          rootCmd.AddCommand(downCmd)
+          rootCmd.AddCommand(runCmd)
+          rootCmd.AddCommand(shellCmd)
+          rootCmd.AddCommand(statusCmd)
+          rootCmd.AddCommand(rebuildCmd)
+          rootCmd.AddCommand(logsCmd)
+          rootCmd.AddCommand(nutsCmd)
+          rootCmd.AddCommand(asterCmd)
+      }
+      ```
+
+      ### cmd/dis/helpers.go
+      Common helper functions:
+      ```go
+      package main
+
+      import (
+          "fmt"
+          "os"
+          "github.com/candacelabs/dis/internal/config"
+          "github.com/candacelabs/dis/internal/container"
+      )
+
+      // mustResolveConfig resolves config or exits with helpful error.
+      func mustResolveConfig() *config.DisConfig {
+          cwd, err := os.Getwd()
+          if err != nil {
+              fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+              os.Exit(1)
+          }
+          cfg, err := config.ResolveConfig(cwd)
+          if err != nil {
+              fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+              fmt.Fprintf(os.Stderr, "Run 'dis init' to set up your dev environment.\n")
+              os.Exit(1)
+          }
+          return cfg
+      }
+
+      // mustCreateManager creates a container manager or exits with helpful error.
+      func mustCreateManager(cfg *config.DisConfig) *container.Manager {
+          mgr, err := container.NewManager(cfg)
+          if err != nil {
+              fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+              os.Exit(1)
+          }
+          return mgr
+      }
+
+      // handleExitCode checks if err is an ExitCodeError and exits with that code.
+      func handleExitCode(err error) {
+          // type-assert for proxy.ExitCodeError, exit with its code
+      }
+      ```
+
+      ### cmd/dis/init.go
+      ```go
+      var initForce bool
+
+      var initCmd = &cobra.Command{
+          Use:   "init",
+          Short: "Initialize dis in the current project",
+          Long:  "Detect project type, generate .dis/Dockerfile and Justfile.",
+          RunE: func(cmd *cobra.Command, args []string) error {
+              cwd, _ := os.Getwd()
+              return scaffold.Init(cwd, scaffold.InitOptions{Force: initForce})
+          },
+      }
+
+      func init() {
+          initCmd.Flags().BoolVar(&initForce, "force", false, "Overwrite existing files")
+      }
+      ```
+
+      ### cmd/dis/up.go
+      - Resolve config → create manager → manager.Up(ctx)
+      - Print emoji-formatted output
+
+      ### cmd/dis/down.go
+      - Resolve config → create manager → manager.Down(ctx)
+
+      ### cmd/dis/run.go
+      ```go
+      var runCmd = &cobra.Command{
+          Use:                "run [command...]",
+          Short:              "Run a command inside the dev container",
+          DisableFlagParsing: true,  // pass all args through
+          RunE: func(cmd *cobra.Command, args []string) error {
+              cfg := mustResolveConfig()
+              mgr := mustCreateManager(cfg)
+              err := proxy.RunCommand(cmd.Context(), mgr, args)
+              handleExitCode(err)
+              return err
+          },
+      }
+      ```
+      IMPORTANT: DisableFlagParsing=true so `dis run make test -v` passes `-v` through.
+
+      ### cmd/dis/shell.go
+      - Resolve config → create manager → proxy.InteractiveShell(ctx, mgr, cfg)
+
+      ### cmd/dis/status.go
+      - Resolve config → create manager → manager.Status(ctx)
+      - Format output as described in cli.proto
+
+      ### cmd/dis/rebuild.go
+      - Resolve config → create manager → manager.Rebuild(ctx)
+
+      ### cmd/dis/logs.go
+      - Flags: --follow (-f), --tail (default "100")
+      - Resolve config → create manager → manager.Logs(ctx, follow, tail)
+
+      ### cmd/dis/easter.go
+      ```go
+      var nutsCmd = &cobra.Command{
+          Use:    "nuts",
+          Short:  "🥜",
+          Hidden: true,
+          RunE: func(cmd *cobra.Command, args []string) error {
+              fmt.Println("🥜 dis nuts — system info")
+              fmt.Printf("dis version: %s\n", version)
+              // Docker version via client
+              // OS/arch via runtime.GOOS/GOARCH
+              // Project info if .dis/Dockerfile exists
+              return nil
+          },
+      }
+
+      var asterCmd = &cobra.Command{
+          Use:    "aster",
+          Short:  "💥",
+          Hidden: true,
+          RunE: func(cmd *cobra.Command, args []string) error {
+              // Same as `dis logs --tail 50` but only error-level output
+              cfg := mustResolveConfig()
+              mgr := mustCreateManager(cfg)
+              return mgr.Logs(cmd.Context(), false, "50")
+          },
+      }
+      ```
+
+      ### cmd/dis/main.go (UPDATE)
+      Replace the skeleton from A0:
+      ```go
+      package main
+
+      func main() {
+          Execute()
+      }
+      ```
+
+      ## Error Handling Patterns
+
+      All commands that need Docker:
+      ```
+      Error: Docker is not running. Start Docker Desktop (or dockerd) and try again.
+      ```
+
+      All commands that need .dis/Dockerfile:
+      ```
+      Error: No .dis/Dockerfile found.
+      Run 'dis init' to set up your dev environment.
+      ```
+
+      `dis run` / `dis shell` when container not running:
+      ```
+      Error: Dev container is not running.
+      Run 'dis up' (or 'just dev') first.
+      ```
+
+      ## Acceptance Criteria
+      1. `go build ./cmd/dis/` succeeds
+      2. `./dis --version` prints version
+      3. `./dis` prints help with all commands listed
+      4. `./dis init --force` calls scaffold.Init with Force=true
+      5. `./dis run echo hello` passes ["echo", "hello"] to proxy.RunCommand
+      6. `./dis logs -f --tail 200` passes follow=true, tail="200"
+      7. `./dis nuts` prints system info (hidden from help)
+      8. Non-zero exit from proxied command → dis exits with same code
+      9. All error messages are helpful and suggest the fix
+
+# =============================================================================
+# Dispatch Table
+# =============================================================================
+
+dispatch:
+  - level: 0
+    agents: [A0, A1, A2, A3]
+    parallelism: 4
+    blocked_by: nothing
+    gate: "go test ./internal/config/ ./internal/container/ ./internal/scaffold/ ./internal/forward/"
+    estimated_time: "2-3 hours"
+
+  - level: 1
+    agents: [A4, A5]
+    parallelism: 2
+    blocked_by: "Level 0 gate"
+    gate: "go test ./internal/container/ ./internal/scaffold/"
+    estimated_time: "3-4 hours"
+
+  - level: 2
+    agents: [A6]
+    parallelism: 1
+    blocked_by: "Level 1 gate"
+    gate: "go test ./internal/proxy/"
+    estimated_time: "1-2 hours"
+
+  - level: 3
+    agents: [A7]
+    parallelism: 1
+    blocked_by: "Level 2 gate"
+    gate: "go build ./cmd/dis/ && go test ./..."
+    estimated_time: "2-3 hours"
+
+# =============================================================================
+# Coordinator Protocol
+# =============================================================================
+
+coordinator:
+  bootstrap:
+    - "Create directory structure: cmd/dis/, internal/{config,container,scaffold,proxy,forward}/"
+    - "Agent A0 initializes go.mod and skeleton — must complete before Level 1 agents can import packages"
+    - "All Level 0 agents write to non-overlapping packages"
+
+  gate_protocol:
+    - "After each level completes, run the gate command"
+    - "If gate fails: identify failing agent, re-run with error context"
+    - "If gate passes: dispatch next level"
+    - "Final gate: go build ./cmd/dis/ && go test ./... && ./dis --version"
+
+  proto_validation:
+    - "After A1: verify DisConfig struct has all fields from config.proto"
+    - "After A2: verify DetectProjectType returns all 5 enum values"
+    - "After A3: verify functions return Docker SDK types (mount.Mount, nat.PortMap)"
+    - "After A4: verify Manager has all methods from container.proto"
+    - "After A5: verify Init and GenerateJustfile signatures match scaffold.proto"
+    - "After A6: verify RunCommand and InteractiveShell use ContainerRunner interface"
+    - "After A7: verify all cobra commands are registered and compile"
+
+  resume_protocol:
+    - "Check which agent output files exist"
+    - "Run tests for completed agents to verify they still pass"
+    - "Skip completed agents, dispatch from next incomplete level"
+    - "If partial level: only dispatch incomplete agents from that level"
+
+# =============================================================================
+# Hard Rules
+# =============================================================================
+
+hard_rules:
+  - "No agent imports another agent's internals (only public API from completed upstream agents)"
+  - "Tests are the only completion signal"
+  - "Proto contract files define the only legal types at agent boundaries"
+  - "The coordinator never writes application code"
+  - "File ownership is exclusive — no two agents write to the same file"
+  - "Proto mismatches are hard failures — if output doesn't match proto, agent has failed"
+  - "A0 must complete before any Level 1 agent runs (go.mod must exist for imports)"
+  - "All Docker SDK usage is confined to internal/container/ and internal/forward/"
+  - "All cobra command wiring is confined to cmd/dis/"
+  - "No global state — config is always passed explicitly"
+  - "Error messages always suggest the fix (e.g., 'Run dis init to set up')"

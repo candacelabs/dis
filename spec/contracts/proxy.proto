@@ -1,0 +1,37 @@
+syntax = "proto3";
+package dis.agent;
+
+// =============================================================================
+// A6: Proxy/Exec agent output (Level 2 — depends on A4)
+// =============================================================================
+
+// RunCommand is the `dis run <cmd>` implementation.
+// Wraps Manager.Exec with UX: checks container running, formats errors, exits with
+// the same exit code as the proxied command.
+//
+// Go signature:
+//   func RunCommand(mgr *container.Manager, args []string) error
+//
+// Behavior:
+//   1. Verify container is running (if not: "Run 'dis up' first")
+//   2. Detect if stdout is a TTY
+//   3. Call mgr.Exec(ctx, args, false) — non-interactive by default
+//   4. Stream stdout/stderr to host stdout/stderr
+//   5. Exit with the same exit code as the container command
+//   6. On SIGINT/SIGTERM: forward signal to container exec
+message RunCommandSpec {
+  repeated string args = 1;
+}
+
+// InteractiveShell is the `dis shell` implementation.
+// Drops the user into an interactive shell inside the container.
+//
+// Go signature:
+//   func InteractiveShell(mgr *container.Manager) error
+//
+// Behavior:
+//   1. Verify container is running (if not: "Run 'dis up' first")
+//   2. Determine shell from config (dis.shell label, default /bin/bash)
+//   3. Call mgr.Exec(ctx, []string{shell}, true) — interactive with TTY
+//   4. On exit: return shell's exit code
+message InteractiveShellSpec {}

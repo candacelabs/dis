@@ -1,0 +1,94 @@
+syntax = "proto3";
+package dis.agent;
+
+// =============================================================================
+// A2: Project Detection & Templates agent output
+// =============================================================================
+
+// ProjectType enum for detected project types.
+// Go type: type ProjectType string
+// Go constants: ProjectTypeNode, ProjectTypePython, ProjectTypeGo, ProjectTypeRust, ProjectTypeUnknown
+enum ProjectType {
+  PROJECT_TYPE_UNKNOWN = 0;
+  PROJECT_TYPE_NODE = 1;
+  PROJECT_TYPE_PYTHON = 2;
+  PROJECT_TYPE_GO = 3;
+  PROJECT_TYPE_RUST = 4;
+}
+
+// DetectProjectType inspects a directory for language markers.
+//
+// Go signature:
+//   func DetectProjectType(projectRoot string) ProjectType
+//
+// Detection rules (first match wins):
+//   - package.json exists → Node
+//   - pyproject.toml OR requirements.txt OR setup.py exists → Python
+//   - go.mod exists → Go
+//   - Cargo.toml exists → Rust
+//   - else → Unknown
+message DetectProjectTypeSpec {
+  string input_project_root = 1;
+  ProjectType output_type = 2;
+}
+
+// DockerfileTemplate returns a complete Dockerfile string for a project type.
+//
+// Go signature:
+//   func DockerfileTemplate(projectType ProjectType) string
+//
+// Each template includes:
+//   - Appropriate base image
+//   - Language runtime installation
+//   - dis.* LABELs with sensible defaults for that language
+//   - WORKDIR /workspace
+message DockerfileTemplateSpec {
+  ProjectType input_type = 1;
+  string output_dockerfile = 2;
+}
+
+// =============================================================================
+// A5: Scaffold Init agent output (Level 1 — depends on A2)
+// =============================================================================
+
+// Init orchestrates the full `dis init` flow.
+//
+// Go signature:
+//   func Init(projectRoot string, opts InitOptions) error
+//
+// Behavior:
+//   1. Check if .dis/Dockerfile already exists (error or overwrite based on opts.Force)
+//   2. Detect project type via DetectProjectType
+//   3. Generate .dis/Dockerfile via DockerfileTemplate
+//   4. Generate Justfile via GenerateJustfile
+//   5. Print summary to stdout
+message InitSpec {
+  string input_project_root = 1;
+  InitOptions input_options = 2;
+}
+
+message InitOptions {
+  bool force = 1;              // overwrite existing files
+  ProjectType project_type = 2; // override auto-detection
+}
+
+// GenerateJustfile produces the Justfile content.
+//
+// Go signature:
+//   func GenerateJustfile() string
+//
+// Returns the standard dis Justfile with dev, shell, down, run, build, test, lint recipes.
+message GenerateJustfileSpec {
+  string output_content = 1;
+}
+
+// GenerateDockerfile produces a .dis/Dockerfile for the given project type.
+//
+// Go signature:
+//   func GenerateDockerfile(projectType ProjectType) string
+//
+// Delegates to DockerfileTemplate and may customize based on project inspection.
+message GenerateDockerfileSpec {
+  ProjectType input_type = 1;
+  string output_content = 2;
+}

@@ -1,0 +1,137 @@
+syntax = "proto3";
+package dis.agent;
+
+import "config.proto";
+import "forward.proto";
+
+// =============================================================================
+// A4: Container Manager agent output (Level 1 — depends on A1, A3)
+// =============================================================================
+
+// Manager is the core Docker lifecycle manager.
+//
+// Go struct:
+//   type Manager struct {
+//       client *client.Client    // Docker SDK client
+//       config *DisConfig        // resolved project config
+//   }
+//
+// Go constructor:
+//   func NewManager(config *DisConfig) (*Manager, error)
+//   - Creates Docker client from environment (DOCKER_HOST, etc.)
+//   - Validates Docker is reachable (ping)
+//   - Returns error with helpful message if Docker is not running
+
+// Up builds the image (if needed) and starts the container.
+//
+// Go signature:
+//   func (m *Manager) Up(ctx context.Context) error
+//
+// Behavior:
+//   1. Check if image exists and is current (hash .dis/Dockerfile, compare to label on image)
+//   2. If image missing or stale: build from .dis/Dockerfile, tag as m.config.ImageName
+//   3. Check if container already running → return early with message
+//   4. Remove any stopped container with same name
+//   5. Create container with:
+//      - Bind mount: project root → /workspace
+//      - Port bindings from config
+//      - Env vars from config + forwarding
+//      - Git/SSH/history mounts from forwarding
+//      - Extra mounts from config
+//      - Shell from config
+//   6. Start container
+//   7. If post_create set: exec it inside container, stream output
+//   8. Print summary: container name, ports, shell
+message UpSpec {
+  DisConfig input_config = 1;
+  // No output message — side effect is running container
+}
+
+// Down stops and removes the container.
+//
+// Go signature:
+//   func (m *Manager) Down(ctx context.Context) error
+//
+// Behavior:
+//   1. Find container by name (m.config.ContainerName)
+//   2. If running: stop with 10s timeout
+//   3. Remove container
+//   4. Do NOT remove image or volumes
+message DownSpec {}
+
+// Exec runs a command inside the running container.
+//
+// Go signature:
+//   func (m *Manager) Exec(ctx context.Context, cmd []string, interactive bool) (int, error)
+//   Returns: (exit code, error)
+//
+// Behavior:
+//   - If interactive: attach stdin/stdout/stderr with TTY
+//   - If not interactive: attach stdout/stderr, stream output
+//   - Working directory: /workspace
+//   - Return the command's exit code
+message ExecSpec {
+  repeated string cmd = 1;
+  bool interactive = 2;
+  int32 output_exit_code = 3;
+}
+
+// Status returns container status information.
+//
+// Go signature:
+//   func (m *Manager) Status(ctx context.Context) (*ContainerStatus, error)
+message ContainerStatus {
+  string container_name = 1;
+  string state = 2;           // "running", "stopped", "not_found"
+  string image = 3;
+  repeated int32 ports = 4;
+  repeated string mounts = 5;
+  string uptime = 6;
+}
+
+// Rebuild forces image rebuild and container restart.
+//
+// Go signature:
+//   func (m *Manager) Rebuild(ctx context.Context) error
+//
+// Behavior:
+//   1. Down (stop + remove container)
+//   2. Remove existing image
+//   3. Build fresh image
+//   4. Up (start container + post_create)
+message RebuildSpec {}
+
+// Logs streams container logs to stdout.
+//
+// Go signature:
+//   func (m *Manager) Logs(ctx context.Context, follow bool, tail string) error
+//
+// Behavior:
+//   - Default tail: "100" lines
+//   - If follow: stream continuously until interrupted
+message LogsSpec {
+  bool follow = 1;
+  string tail = 2;
+}
+
+// NeedsRebuild checks if the Dockerfile has changed since the image was built.
+//
+// Go signature:
+//   func (m *Manager) NeedsRebuild(ctx context.Context) (bool, error)
+//
+// Behavior:
+//   - SHA256 hash the .dis/Dockerfile content
+//   - Compare to "dis.dockerfile.hash" label stored on the image
+//   - Return true if hashes differ or image doesn't exist
+message NeedsRebuildSpec {
+  bool output_needs_rebuild = 1;
+  string output_reason = 2;
+}
+
+// IsRunning checks if the dev container is currently running.
+//
+// Go signature:
+//   func (m *Manager) IsRunning(ctx context.Context) (bool, error)
+message IsRunningSpec {
+  bool output_running = 1;
+}

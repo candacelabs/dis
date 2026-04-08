@@ -1,0 +1,65 @@
+// Proto contracts for dis agent I/O boundaries
+// These describe the Go types/interfaces each agent produces.
+// They are NOT compiled — they are the typed specification agents validate against.
+
+syntax = "proto3";
+package dis.agent;
+
+// =============================================================================
+// A1: Config & Labels agent output
+// =============================================================================
+
+// DisConfig is the resolved configuration for a dis-managed project.
+// Parsed from .dis/Dockerfile LABELs with convention-based defaults.
+message DisConfig {
+  string project_name = 1;         // derived from directory name
+  string dockerfile_path = 2;      // always ".dis/Dockerfile"
+  string workspace_dir = 3;        // container workspace, default "/workspace"
+  repeated int32 ports = 4;        // from LABEL dis.ports
+  repeated EnvVar env_vars = 5;    // from LABEL dis.env
+  repeated Mount extra_mounts = 6; // from LABEL dis.mounts
+  string shell = 7;                // from LABEL dis.shell, default "/bin/bash"
+  string post_create = 8;          // from LABEL dis.post_create
+  string image_name = 9;           // "dis-<project_name>"
+  string container_name = 10;      // "dis-<project_name>-dev"
+}
+
+message EnvVar {
+  string key = 1;
+  string value = 2;
+}
+
+message Mount {
+  string source = 1;   // host path (relative to project root)
+  string target = 2;   // container path
+  bool read_only = 3;
+}
+
+// ParseLabelsFromDockerfile reads a Dockerfile path and extracts dis.* LABELs.
+// Returns a map of label key → value.
+//
+// Go signature:
+//   func ParseLabelsFromDockerfile(dockerfilePath string) (map[string]string, error)
+message ParseLabelsSpec {
+  string input_dockerfile_path = 1;
+  map<string, string> output_labels = 2;
+}
+
+// ResolveConfig takes a project root directory, finds .dis/Dockerfile,
+// parses labels, applies defaults, and returns a fully resolved DisConfig.
+//
+// Go signature:
+//   func ResolveConfig(projectRoot string) (*DisConfig, error)
+message ResolveConfigSpec {
+  string input_project_root = 1;
+  DisConfig output_config = 2;
+}
+
+// DockerfileExists checks if .dis/Dockerfile exists in the project root.
+//
+// Go signature:
+//   func DockerfileExists(projectRoot string) bool
+message DockerfileExistsSpec {
+  string input_project_root = 1;
+  bool output_exists = 2;
+}
