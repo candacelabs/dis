@@ -71,7 +71,18 @@ type ContainerStatus struct {
 // NewManager creates a Manager by connecting to the local Docker daemon.
 // Returns a user-friendly error if Docker is not running.
 func NewManager(cfg *Config) (*Manager, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
+	host := ResolveDockerHost(os.Getenv, home)
+
+	// FromEnv first (TLS config + DOCKER_HOST + API version from env), then
+	// WithHost so our resolved host (context-aware, with the DOCKER_HOST
+	// short-circuit already applied in ResolveDockerHost) always wins over
+	// FromEnv's own DOCKER_HOST handling — they agree when DOCKER_HOST is set,
+	// and WithHost only takes over when DOCKER_HOST is unset.
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithHost(host), client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Docker client: %w", err)
 	}
@@ -81,7 +92,7 @@ func NewManager(cfg *Config) (*Manager, error) {
 
 	_, err = cli.Ping(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("Docker is not running. Start Docker Desktop (or dockerd) and try again.")
+		return nil, fmt.Errorf("Docker is not running (tried %s). Start Docker Desktop (or dockerd) and try again.", host)
 	}
 
 	return &Manager{client: cli, config: cfg}, nil
