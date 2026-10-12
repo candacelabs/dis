@@ -19,7 +19,7 @@ type DisConfig struct {
 	EnvVars        []EnvVar
 	ExtraMounts    []Mount
 	Tmpfs          []string // container paths mounted in memory
-	Shell          string // default "/bin/bash"
+	Shell          string   // default "/bin/bash"
 	PostCreate     string
 	ImageName      string // "dis-<ProjectName>"
 	ContainerName  string // "dis-<ProjectName>-dev"
