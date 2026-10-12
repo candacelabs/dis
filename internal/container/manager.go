@@ -46,6 +46,7 @@ type Config struct {
 	Ports          []int
 	EnvVars        []EnvVar
 	ExtraMounts    []Mount
+	Tmpfs          []string // container paths mounted in memory
 	Shell          string // default "/bin/bash"
 	PostCreate     string
 	ImageName      string // "dis-<ProjectName>"
@@ -447,6 +448,15 @@ func (m *Manager) assembleMounts() ([]mount.Mount, []string, error) {
 			Source:   em.Source,
 			Target:   em.Target,
 			ReadOnly: em.ReadOnly,
+		})
+	}
+
+	// 6. In-memory mounts from config, writable by every user.
+	for _, target := range m.config.Tmpfs {
+		allMounts = append(allMounts, mount.Mount{
+			Type:         mount.TypeTmpfs,
+			Target:       target,
+			TmpfsOptions: &mount.TmpfsOptions{Mode: 01777},
 		})
 	}
 

@@ -138,6 +138,7 @@ There is no configuration file. Everything is a Dockerfile `LABEL`:
 | `dis.ports` | `"3000,5173,8080"` | Ports to forward from container |
 | `dis.env` | `"NODE_ENV=development,DEBUG=1"` | Environment variables |
 | `dis.mounts` | `"./data:/data,./config:/etc/app"` | Additional bind mounts |
+| `dis.tmpfs` | `"/tmp,/home/dev/.cache"` | Container paths mounted in memory, writable by every user, emptied when the container stops |
 | `dis.shell` | `"/bin/zsh"` | Default shell for `dis shell` |
 | `dis.post_create` | `"npm install && npm run setup"` | Run once after container creation |
 

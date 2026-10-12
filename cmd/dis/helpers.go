@@ -55,6 +55,7 @@ func toContainerConfig(cfg *config.DisConfig) *container.Config {
 		Ports:          cfg.Ports,
 		EnvVars:        envVars,
 		ExtraMounts:    mounts,
+		Tmpfs:          cfg.Tmpfs,
 		Shell:          cfg.Shell,
 		PostCreate:     cfg.PostCreate,
 		ImageName:      cfg.ImageName,
