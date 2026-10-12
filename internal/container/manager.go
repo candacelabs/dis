@@ -47,7 +47,7 @@ type Config struct {
 	EnvVars        []EnvVar
 	ExtraMounts    []Mount
 	Tmpfs          []string // container paths mounted in memory
-	Shell          string // default "/bin/bash"
+	Shell          string   // default "/bin/bash"
 	PostCreate     string
 	ImageName      string // "dis-<ProjectName>"
 	ContainerName  string // "dis-<ProjectName>-dev"
@@ -164,6 +164,7 @@ func (m *Manager) Up(ctx context.Context) error {
 	hostCfg := &containertypes.HostConfig{
 		Mounts:       mounts,
 		PortBindings: portMap,
+		Tmpfs:        tmpfsMounts(m.config.Tmpfs),
 	}
 
 	resp, err := m.client.ContainerCreate(ctx, containerCfg, hostCfg, nil, nil, m.config.ContainerName)
@@ -451,16 +452,21 @@ func (m *Manager) assembleMounts() ([]mount.Mount, []string, error) {
 		})
 	}
 
-	// 6. In-memory mounts from config, writable by every user.
-	for _, target := range m.config.Tmpfs {
-		allMounts = append(allMounts, mount.Mount{
-			Type:         mount.TypeTmpfs,
-			Target:       target,
-			TmpfsOptions: &mount.TmpfsOptions{Mode: 01777},
-		})
-	}
-
 	return allMounts, allEnv, nil
+}
+
+// tmpfsMounts is the in-memory mounts for the container's host config:
+// readable, writable and executable by every user, so a toolchain can run
+// what it builds there. Docker mounts tmpfs noexec unless told otherwise.
+func tmpfsMounts(targets []string) map[string]string {
+	if len(targets) == 0 {
+		return nil
+	}
+	mounts := make(map[string]string, len(targets))
+	for _, target := range targets {
+		mounts[target] = "rw,exec,mode=1777"
+	}
+	return mounts
 }
 
 // assembleEnv combines config env vars with forwarding env vars.
@@ -498,7 +504,7 @@ func (m *Manager) buildImage(ctx context.Context) error {
 		Remove:     true,
 		Labels: map[string]string{
 			"dis.dockerfile.hash": currentHash,
-			"dis.project":        m.config.ProjectName,
+			"dis.project":         m.config.ProjectName,
 		},
 	})
 	if err != nil {

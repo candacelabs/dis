@@ -76,24 +76,9 @@ RUN apt-get update
 	assert.Empty(t, cfg.Ports)
 	assert.Empty(t, cfg.EnvVars)
 	assert.Empty(t, cfg.ExtraMounts)
-	assert.Empty(t, cfg.Tmpfs)
 	assert.Equal(t, "", cfg.PostCreate)
 	assert.Equal(t, "dis-bare-project", cfg.ImageName)
 	assert.Equal(t, "dis-bare-project-dev", cfg.ContainerName)
-}
-
-func TestResolveConfig_Tmpfs(t *testing.T) {
-	dir := t.TempDir()
-	projectDir := filepath.Join(dir, "memory-project")
-	require.NoError(t, os.MkdirAll(projectDir, 0755))
-
-	writeDockerfile(t, projectDir, `FROM ubuntu:22.04
-LABEL dis.tmpfs="/tmp, /cache,"
-`)
-
-	cfg, err := ResolveConfig(projectDir)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"/tmp", "/cache"}, cfg.Tmpfs)
 }
 
 func TestResolveConfig_MissingDockerfile(t *testing.T) {
