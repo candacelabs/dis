@@ -18,6 +18,7 @@ type DisConfig struct {
 	Ports          []int
 	EnvVars        []EnvVar
 	ExtraMounts    []Mount
+	Tmpfs          []string // container paths mounted in memory
 	Shell          string // default "/bin/bash"
 	PostCreate     string
 	ImageName      string // "dis-<ProjectName>"
@@ -94,6 +95,11 @@ func ResolveConfig(projectRoot string) (*DisConfig, error) {
 		cfg.ExtraMounts = parseMounts(v)
 	}
 
+	// Parse in-memory mounts
+	if v, ok := labels["dis.tmpfs"]; ok && v != "" {
+		cfg.Tmpfs = parseTmpfs(v)
+	}
+
 	return cfg, nil
 }
 
@@ -165,6 +171,17 @@ func parseEnvVars(s string) []EnvVar {
 }
 
 // parseMounts splits a comma-separated mount string, each item split by ":" into source/target.
+// parseTmpfs splits a comma-separated list of container paths.
+func parseTmpfs(s string) []string {
+	var paths []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths
+}
+
 func parseMounts(s string) []Mount {
 	parts := strings.Split(s, ",")
 	mounts := make([]Mount, 0, len(parts))
