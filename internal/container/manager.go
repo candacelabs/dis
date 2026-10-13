@@ -439,6 +439,14 @@ func (m *Manager) assembleMounts() ([]mount.Mount, []string, error) {
 	allMounts = append(allMounts, sshMounts...)
 	allEnv = append(allEnv, sshEnv...)
 
+	// 3b. GitHub CLI login forwarding.
+	ghMounts, ghEnv, err := forward.GHMounts()
+	if err != nil {
+		return nil, nil, fmt.Errorf("gh mounts: %w", err)
+	}
+	allMounts = append(allMounts, ghMounts...)
+	allEnv = append(allEnv, ghEnv...)
+
 	// 4. Shell history volume.
 	allMounts = append(allMounts, forward.HistoryVolume(m.config.ProjectName, m.config.Shell))
 
